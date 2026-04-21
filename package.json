@@ -1,6 +1,18 @@
 {
+  "name": "cssbattle-previewer-backend",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Cloud Run backend for rendering CSSBattle previews.",
+  "main": "index.js",
+  "scripts": {
+    "start": "functions-framework --target=renderPreview",
+    "check": "node --check index.js"
+  },
+  "engines": {
+    "node": "22"
+  },
   "dependencies": {
     "@google-cloud/functions-framework": "^5.0.2",
-    "puppeteer": "^v24.42.0"
+    "puppeteer": "^24.42.0"
   }
 }
