@@ -5,7 +5,7 @@ const puppeteer = require('puppeteer');
 
 const VIEWPORT_WIDTH = 400;
 const VIEWPORT_HEIGHT = 300;
-const MAX_HTML_BYTES = 100 * 1024;
+const MAX_HTML_BYTES = 10 * 1024;
 const RENDER_TIMEOUT_MS = 10_000;
 const CHROME_LAUNCH_TIMEOUT_MS = 15_000;
 const CLEANUP_TIMEOUT_MS = 2_000;
