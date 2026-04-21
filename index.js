@@ -41,7 +41,7 @@ const CONTENT_SECURITY_POLICY = [
 ].join("; ");
 
 const CRC32_TABLE = createCrc32Table();
-const EMPTY_PREVIEW_ETAG = '"empty-preview-400x300-white-v1"';
+const EMPTY_PREVIEW_ETAG = '"empty-preview-400x300-white-v2"';
 const EMPTY_PREVIEW_SCREENSHOT = createSolidPng(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 255, 255, 255, 255);
 
 let browserPromise;
@@ -98,7 +98,7 @@ function crc32(buffer) {
 
 function createPngChunk(type, data = Buffer.alloc(0)) {
     const typeBuffer = Buffer.from(type, "ascii");
-    const chunk = Buffer.alloc(8 + typeBuffer.length + data.length + 4);
+    const chunk = Buffer.alloc(12 + data.length);
 
     chunk.writeUInt32BE(data.length, 0);
     typeBuffer.copy(chunk, 4);
@@ -279,7 +279,7 @@ function sendScreenshot(res, screenshot, etag) {
     res.set('Cache-Control', 'public, max-age=3600');
     res.set('ETag', etag);
     res.header({ "Content-Type": "image/png" });
-    res.end(screenshot, "binary");
+    res.end(screenshot);
 }
 
 function sendNotModified(res, etag) {
