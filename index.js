@@ -1,7 +1,10 @@
 const functions = require('@google-cloud/functions-framework');
 const crypto = require('node:crypto');
+const zlib = require('node:zlib');
 const puppeteer = require('puppeteer');
 
+const VIEWPORT_WIDTH = 400;
+const VIEWPORT_HEIGHT = 300;
 const MAX_HTML_BYTES = 100 * 1024;
 const RENDER_TIMEOUT_MS = 10_000;
 const CHROME_LAUNCH_TIMEOUT_MS = 15_000;
@@ -37,6 +40,10 @@ const CONTENT_SECURITY_POLICY = [
     "form-action 'none'"
 ].join("; ");
 
+const CRC32_TABLE = createCrc32Table();
+const EMPTY_PREVIEW_ETAG = '"empty-preview-400x300-white-v1"';
+const EMPTY_PREVIEW_SCREENSHOT = createSolidPng(VIEWPORT_WIDTH, VIEWPORT_HEIGHT, 255, 255, 255, 255);
+
 let browserPromise;
 const screenshotCache = new Map();
 const screenshotRenderPromises = new Map();
@@ -63,9 +70,84 @@ async function withTimeout(operation, timeoutMs, message) {
     }
 }
 
+function createCrc32Table() {
+    const table = new Uint32Array(256);
+
+    for (let i = 0; i < table.length; i += 1) {
+        let value = i;
+
+        for (let bit = 0; bit < 8; bit += 1) {
+            value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+        }
+
+        table[i] = value >>> 0;
+    }
+
+    return table;
+}
+
+function crc32(buffer) {
+    let crc = 0xffffffff;
+
+    for (const byte of buffer) {
+        crc = CRC32_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+    }
+
+    return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createPngChunk(type, data = Buffer.alloc(0)) {
+    const typeBuffer = Buffer.from(type, "ascii");
+    const chunk = Buffer.alloc(8 + typeBuffer.length + data.length + 4);
+
+    chunk.writeUInt32BE(data.length, 0);
+    typeBuffer.copy(chunk, 4);
+    data.copy(chunk, 8);
+
+    const crcBuffer = Buffer.concat([typeBuffer, data]);
+    chunk.writeUInt32BE(crc32(crcBuffer), chunk.length - 4);
+
+    return chunk;
+}
+
+function createSolidPng(width, height, red, green, blue, alpha) {
+    const bytesPerPixel = 4;
+    const rowLength = 1 + width * bytesPerPixel;
+    const rawImage = Buffer.alloc(rowLength * height);
+
+    for (let row = 0; row < height; row += 1) {
+        const rowStart = row * rowLength;
+        rawImage[rowStart] = 0;
+
+        for (let column = 0; column < width; column += 1) {
+            const pixelStart = rowStart + 1 + column * bytesPerPixel;
+            rawImage[pixelStart] = red;
+            rawImage[pixelStart + 1] = green;
+            rawImage[pixelStart + 2] = blue;
+            rawImage[pixelStart + 3] = alpha;
+        }
+    }
+
+    const ihdr = Buffer.alloc(13);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr[8] = 8;
+    ihdr[9] = 6;
+    ihdr[10] = 0;
+    ihdr[11] = 0;
+    ihdr[12] = 0;
+
+    return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        createPngChunk("IHDR", ihdr),
+        createPngChunk("IDAT", zlib.deflateSync(rawImage)),
+        createPngChunk("IEND")
+    ]);
+}
+
 async function launchBrowser() {
     const browser = await puppeteer.launch({
-        defaultViewport: { width: 400, height: 300 },
+        defaultViewport: { width: VIEWPORT_WIDTH, height: VIEWPORT_HEIGHT },
         args: CHROME_ARGS,
         headless: true,
         pipe: true,
@@ -278,7 +360,19 @@ process.once("SIGTERM", () => {
 
 functions.http('renderPreview', async (req, res) => {
     try {
-        const html = addSecurityPolicy(getHtmlFromRequest(req));
+        const rawHtml = getHtmlFromRequest(req);
+
+        if (rawHtml.length === 0) {
+            if (clientHasFreshScreenshot(req, EMPTY_PREVIEW_ETAG)) {
+                sendNotModified(res, EMPTY_PREVIEW_ETAG);
+                return;
+            }
+
+            sendScreenshot(res, EMPTY_PREVIEW_SCREENSHOT, EMPTY_PREVIEW_ETAG);
+            return;
+        }
+
+        const html = addSecurityPolicy(rawHtml);
         const cacheKey = createCacheKey(html);
         const etag = `"${cacheKey}"`;
 
